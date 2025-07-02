@@ -32,14 +32,12 @@ def increaseD(d: dict, key: any):
     d[key] = d.get(key, 0) + 1
 
 def decreaseD(d: dict, key: any):
-    assert key in d, "Key must exist in the dictionary to decrease its value."
     d[key] -= 1
 
 def appendD(d: dict, key: any, value: any):
     if key not in d:
-        d[key] = []
-    d[key].append(value)
+        d[key] = set()
+    d[key].add(value)
 
 def removeD(d: dict, key: any, value: any):
     d[key].remove(value)
-    

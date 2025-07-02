@@ -1,5 +1,6 @@
 import os
 import regex as re
+from time import time
 from tqdm import tqdm
 
 from .utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
@@ -61,6 +62,8 @@ class BPETokenizer():
         print("Pre-calculating appearances of byte pairs...")
         maxn = 0
         maxp = None
+
+        t1 = time()
         if len(self.vocab) < maximum_vocab_size:
             for i, words in enumerate(self.pretokenized_corpus):
                 for j, word in enumerate(words):
@@ -90,7 +93,8 @@ class BPETokenizer():
 
                 pbar.update(len(self.vocab) - current_vocab_size) 
                 
-                for i, j, k1 in position[maxp]:
+                pos = list(position[maxp])
+                for i, j, k1 in pos:
                     s = ufs[(i, j)]
                     v = value[(i, j)]
                     k2 = k1 + s.getSize(k1)
@@ -107,6 +111,8 @@ class BPETokenizer():
                         
                         decreaseD(appearances, (bPre, maxp[0]))
                         removeD(position, (bPre, maxp[0]), (i, j, k0))
+                        if (bPre, maxp[0]) == maxp:
+                            pos.remove((i, j, k0))
 
                     if s.has(k2 + sizek2):
                         k3 = k2 + sizek2
@@ -116,6 +122,8 @@ class BPETokenizer():
 
                         decreaseD(appearances, (maxp[1], bSuf))
                         removeD(position, (maxp[1], bSuf), (i, j, k2))
+                        if (maxp[1], bSuf) == maxp:
+                            pos.remove((i, j, k2))
                         
                 appearances.pop(maxp)
                 position.pop(maxp)
@@ -136,7 +144,6 @@ def train_bpe(
     vocab_size: int,
     special_tokens: list[str],
 ):
-    from time import time
     tokenizer = BPETokenizer(corpus = input_path, special_tokens=special_tokens)
     s = time()
     tokenizer.pre_tokenize_corpus()
