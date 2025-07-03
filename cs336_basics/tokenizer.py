@@ -5,7 +5,7 @@ from tqdm import tqdm
 from pickle import dump
 from multiprocessing import Pool, cpu_count
 
-from .utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
+from cs336_basics.utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
 
 class BPETokenizer():
     def __init__(self, corpus:str, special_tokens: list[str] = ["<|endoftext|>"]):
@@ -17,7 +17,7 @@ class BPETokenizer():
             self.vocab[sp_token.encode("utf-8")] = len(self.vocab)
         
         self.corpus = []
-        self.pretokenized_corpus = []
+        self.frequency = {}
         self.merges = []
 
         PAT = '|'.join(map(re.escape, special_tokens))
@@ -38,14 +38,18 @@ class BPETokenizer():
             frequency (dict[str:int]): 预分词后的token列表
         """
         PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-        return re.findall(PAT, text, re.UNICODE)
+        return re.finditer(PAT, text, re.UNICODE)
     
-    def pre_tokenize_corpus(self):
+    def pre_tokenize_corpus(self) -> dict[str, int]:
         """
         对语料库进行预分词
         """
         for text in tqdm(self.corpus, desc="Pre-tokenizing corpus"):
-            self.pretokenized_corpus.append(self.pre_tokenize(text))
+            for word in BPETokenizer.pre_tokenize(text):
+                word = word.group(0)
+                self.frequency[word] = self.frequency.get(word, 0) + 1
+        
+        print(f"Pre-tokenization complete. Found {len(self.frequency)} unique tokens.")
     
     @staticmethod
     def _pre_tokenize_wrapper(text_chunk):
@@ -74,27 +78,7 @@ class BPETokenizer():
         Args:
             num_processes (int, optional): 使用的进程数。如果为None，则使用CPU核心数
         """
-        if num_processes is None:
-            num_processes = cpu_count()
-        
-        # 将语料库分割成块
-        chunk_size = max(1, len(self.corpus) // num_processes)
-        chunks = [self.corpus[i:i + chunk_size] for i in range(0, len(self.corpus), chunk_size)]
-        
-        print(f"Using {num_processes} processes to pre-tokenize {len(self.corpus)} texts")
-        
-        # 使用多进程池进行并行处理
-        with Pool(processes=num_processes) as pool:
-            results = list(
-                pool.imap(BPETokenizer._pre_tokenize_wrapper, enumerate(chunks))
-            )
-        # 合并结果
-        print("Merging results from all processes...")
-        self.pretokenized_corpus = []
-        for chunk_result in results:
-            self.pretokenized_corpus.extend(chunk_result)
-        
-        print(f"Pre-tokenization complete.")
+        raise NotImplementedError("Parallel pre-tokenization is not implemented yet.")
 
     def train_bpe(self, maximum_vocab_size: int = 10000):
         """
@@ -111,29 +95,28 @@ class BPETokenizer():
         
         maxn = 0
         maxp = None
+        frequency = self.frequency
 
         if len(self.vocab) < maximum_vocab_size:
-            pbar = tqdm(total=len(self.pretokenized_corpus), desc="BPE Training(Pre-processing)...")
-            for i, words in enumerate(self.pretokenized_corpus):
-                for j, word in enumerate(words):
-                    # i, j 是语料库中第i行的第j个预分词token
-                    bs = [(b, ) for b in word.encode("utf-8")]
-                    l = len(bs)
-                    s = ufs[(i, j)] = UnionFindSet(size = l)
-                    v = value[(i, j)] = {}
-                    for k in range(l):
-                        v[k] = bs[k]
+            pbar = tqdm(total=len(frequency), desc="BPE Training(Pre-processing)...")
+            for token in frequency:
+                bs = [(b, ) for b in token.encode("utf-8")]
+                l = len(bs)
+                s = ufs[token] = UnionFindSet(size = l)
+                v = value[token] = {}
+                for k in range(l):
+                    v[k] = bs[k]
 
-                        if k < l - 1:
-                            pair = (bs[k], bs[k + 1])
-                            increaseD(appearances, pair)
-                            appendD(position, pair, (i, j, k))
-                            if appearances[pair] > maxn or (appearances[pair] == maxn and pair > maxp):
-                                maxn = appearances[pair]
-                                maxp = pair
+                    if k < l - 1:
+                        pair = (bs[k], bs[k + 1])
+                        increaseD(appearances, pair, frequency[token])
+                        appendD(position, pair, (token, k))
+                        if appearances[pair] > maxn or (appearances[pair] == maxn and pair > maxp):
+                            maxn = appearances[pair]
+                            maxp = pair
                 pbar.update(1)
             pbar.close()
-            
+        # print(appearances)
         pbar = tqdm(total=maximum_vocab_size - len(self.vocab), desc="BPE Training(Merging byte pairs)...")
         while len(self.vocab) < maximum_vocab_size:
             current_vocab_size = len(self.vocab)
@@ -145,9 +128,9 @@ class BPETokenizer():
                 pbar.update(len(self.vocab) - current_vocab_size) 
                 
                 pos = list(position[maxp])
-                for i, j, k1 in pos:
-                    s = ufs[(i, j)]
-                    v = value[(i, j)]
+                for token, k1 in pos:
+                    s = ufs[token]
+                    v = value[token]
                     k2 = k1 + s.getSize(k1)
                     sizek2 = s.getSize(k2)
 
@@ -157,24 +140,24 @@ class BPETokenizer():
                     if s.has(k1 - 1):
                         k0 = s.find(k1 - 1)
                         bPre = v[k0]
-                        increaseD(appearances, (bPre, bMaxPair))
-                        appendD(position, (bPre, bMaxPair), (i, j, k0))
+                        increaseD(appearances, (bPre, bMaxPair), frequency[token])
+                        appendD(position, (bPre, bMaxPair), (token, k0))
                         
-                        decreaseD(appearances, (bPre, maxp[0]))
-                        removeD(position, (bPre, maxp[0]), (i, j, k0))
+                        decreaseD(appearances, (bPre, maxp[0]), frequency[token])
+                        removeD(position, (bPre, maxp[0]), (token, k0))
                         if (bPre, maxp[0]) == maxp:
-                            pos.remove((i, j, k0))
+                            pos.remove((token, k0))
 
                     if s.has(k2 + sizek2):
                         k3 = k2 + sizek2
                         bSuf = v[k3]
-                        increaseD(appearances, (bMaxPair, bSuf))
-                        appendD(position, (bMaxPair, bSuf), (i, j, k1))
+                        increaseD(appearances, (bMaxPair, bSuf), frequency[token])
+                        appendD(position, (bMaxPair, bSuf), (token, k1))
 
-                        decreaseD(appearances, (maxp[1], bSuf))
-                        removeD(position, (maxp[1], bSuf), (i, j, k2))
+                        decreaseD(appearances, (maxp[1], bSuf), frequency[token])
+                        removeD(position, (maxp[1], bSuf), (token, k2))
                         if (maxp[1], bSuf) == maxp:
-                            pos.remove((i, j, k2))
+                            pos.remove((token, k2))
                         
                 appearances.pop(maxp)
                 position.pop(maxp)
@@ -220,3 +203,4 @@ if __name__ == "__main__":
     tokenizer = BPETokenizer("data/baby_data.txt", special_tokens=["<|endoftext|>"])
     tokenizer.pre_tokenize_corpus()
     tokenizer.train_bpe(maximum_vocab_size=300)
+    print(tokenizer.merges)
