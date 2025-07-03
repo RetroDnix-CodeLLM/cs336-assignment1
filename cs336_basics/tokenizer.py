@@ -2,6 +2,7 @@ import os
 import regex as re
 from time import time
 from tqdm import tqdm
+from pickle import dump
 
 from .utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
 
@@ -58,13 +59,11 @@ class BPETokenizer():
         value = {}          # value[(i,j,k)]: 表示位置(i,j,k)的字节对的值（首字节标记）
         ufs = {}
         
-        print("Training BPE tokenizer...")
-        print("Pre-calculating appearances of byte pairs...")
         maxn = 0
         maxp = None
 
-        t1 = time()
         if len(self.vocab) < maximum_vocab_size:
+            pbar = tqdm(total=len(self.pretokenized_corpus), desc="BPE Training(Pre-processing)...")
             for i, words in enumerate(self.pretokenized_corpus):
                 for j, word in enumerate(words):
                     # i, j 是语料库中第i行的第j个预分词token
@@ -82,8 +81,10 @@ class BPETokenizer():
                             if appearances[pair] > maxn or (appearances[pair] == maxn and pair > maxp):
                                 maxn = appearances[pair]
                                 maxp = pair
+                pbar.update(1)
+            pbar.close()
             
-        pbar = tqdm(total=maximum_vocab_size - len(self.vocab), desc="Merging byte pairs")
+        pbar = tqdm(total=maximum_vocab_size - len(self.vocab), desc="BPE Training(Merging byte pairs)...")
         while len(self.vocab) < maximum_vocab_size:
             current_vocab_size = len(self.vocab)
             if maxp is not None:
@@ -139,6 +140,17 @@ class BPETokenizer():
         pbar.close()
         print("BPE training complete.")
 
+    def save_vocab(self, output_path: str | os.PathLike):
+        """
+        保存BPE词汇表到指定路径
+
+        Args:
+            output_path (str | os.PathLike): 输出路径
+        """
+        with open(output_path, "wb") as f:
+            dump(self.vocab, f)
+        print(f"Vocabulary saved to {output_path}")
+    
 def train_bpe(
     input_path: str | os.PathLike,
     vocab_size: int,
@@ -158,5 +170,4 @@ if __name__ == "__main__":
     tokenizer = BPETokenizer("data/baby_data.txt", special_tokens=["<|endoftext|>"])
     tokenizer.pre_tokenize_corpus()
     tokenizer.train_bpe(maximum_vocab_size=300)
-    # pprint(tokenizer.vocab)
     
