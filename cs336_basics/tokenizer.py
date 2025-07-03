@@ -3,6 +3,7 @@ import regex as re
 from time import time
 from tqdm import tqdm
 from pickle import dump
+from multiprocessing import Pool, cpu_count
 
 from .utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
 
@@ -45,6 +46,55 @@ class BPETokenizer():
         """
         for text in tqdm(self.corpus, desc="Pre-tokenizing corpus"):
             self.pretokenized_corpus.append(self.pre_tokenize(text))
+    
+    @staticmethod
+    def _pre_tokenize_wrapper(text_chunk):
+        """
+        多进程预分词的包装函数
+        
+        Args:
+            text_chunk (list[str]): 文本块列表
+        
+        Returns:
+            list[list[str]]: 预分词后的结果列表
+        """
+        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        results = []
+        for i, text in enumerate(text_chunk[1]):
+            results.append(re.findall(PAT, text, re.UNICODE))
+            if i % 10000 == 0:
+                print(f"Process {text_chunk[0]}: {i} / {len(text_chunk[1])}")
+    
+        return results
+
+    def parallel_pre_tokenize_corpus(self, num_processes=None):
+        """
+        对语料库进行并行预分词
+        
+        Args:
+            num_processes (int, optional): 使用的进程数。如果为None，则使用CPU核心数
+        """
+        if num_processes is None:
+            num_processes = cpu_count()
+        
+        # 将语料库分割成块
+        chunk_size = max(1, len(self.corpus) // num_processes)
+        chunks = [self.corpus[i:i + chunk_size] for i in range(0, len(self.corpus), chunk_size)]
+        
+        print(f"Using {num_processes} processes to pre-tokenize {len(self.corpus)} texts")
+        
+        # 使用多进程池进行并行处理
+        with Pool(processes=num_processes) as pool:
+            results = list(
+                pool.imap(BPETokenizer._pre_tokenize_wrapper, enumerate(chunks))
+            )
+        # 合并结果
+        print("Merging results from all processes...")
+        self.pretokenized_corpus = []
+        for chunk_result in results:
+            self.pretokenized_corpus.extend(chunk_result)
+        
+        print(f"Pre-tokenization complete.")
 
     def train_bpe(self, maximum_vocab_size: int = 10000):
         """
@@ -170,4 +220,3 @@ if __name__ == "__main__":
     tokenizer = BPETokenizer("data/baby_data.txt", special_tokens=["<|endoftext|>"])
     tokenizer.pre_tokenize_corpus()
     tokenizer.train_bpe(maximum_vocab_size=300)
-    
