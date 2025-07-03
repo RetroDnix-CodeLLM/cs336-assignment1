@@ -4,10 +4,12 @@ from time import time
 from tqdm import tqdm
 from pickle import dump
 from multiprocessing import Pool, cpu_count
+from collections import Counter
 
 from cs336_basics.utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
 
 class BPETokenizer():
+    pretokenizePAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     def __init__(self, corpus:str, special_tokens: list[str] = ["<|endoftext|>"]):
         self.vocab = {}
         for i in range(256):
@@ -37,8 +39,7 @@ class BPETokenizer():
         Returns:
             frequency (dict[str:int]): 预分词后的token列表
         """
-        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-        return re.finditer(PAT, text, re.UNICODE)
+        return re.finditer(BPETokenizer.pretokenizePAT, text, re.UNICODE)
     
     def pre_tokenize_corpus(self):
         """
@@ -50,26 +51,28 @@ class BPETokenizer():
                 self.frequency[token] = self.frequency.get(token, 0) + 1
         
         print(f"Pre-tokenization complete. Found {len(self.frequency)} unique tokens.")
-    
+
     @staticmethod
-    def _pre_tokenize_wrapper(text_chunk):
+    def _process_text_chunk(text_chunk: str):
         """
-        多进程预分词的包装函数
+        处理单个文本块的辅助函数，用于并行处理
         
         Args:
-            text_chunk (list[str]): 文本块列表
+            text (str): 需要处理的文本块
         
         Returns:
-            list[list[str]]: 预分词后的结果列表
+            dict: 该文本块中token的频率字典
         """
-        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-        results = []
-        for i, text in enumerate(text_chunk[1]):
-            results.append(re.findall(PAT, text, re.UNICODE))
+        id = text_chunk[0]
+        chunk = text_chunk[1]
+        frequency = Counter()
+        for i, text in enumerate(chunk):
+            for result in re.finditer(BPETokenizer.pretokenizePAT, text, re.UNICODE):
+                token = result.group(0)
+                frequency[token] += 1
             if i % 10000 == 0:
-                print(f"Process {text_chunk[0]}: {i} / {len(text_chunk[1])}")
-    
-        return results
+                print(f"Process {id}: {i} / {len(chunk)}")
+        return frequency
 
     def parallel_pre_tokenize_corpus(self, num_processes=None):
         """
@@ -78,7 +81,21 @@ class BPETokenizer():
         Args:
             num_processes (int, optional): 使用的进程数。如果为None，则使用CPU核心数
         """
-        raise NotImplementedError("Parallel pre-tokenization is not implemented yet.")
+        if num_processes is None:
+            num_processes = cpu_count()
+        
+        print(f"Starting parallel pre-tokenization using {num_processes} processes...")
+        
+        # 初始化频率字典
+        self.frequency = Counter()
+        self.chunked_corpus = [self.corpus[i::num_processes] for i in range(num_processes)]
+        
+        # 使用多进程池处理语料库
+        with Pool(num_processes) as pool:
+            for result in pool.imap_unordered(BPETokenizer._process_text_chunk, enumerate(self.chunked_corpus)):
+                self.frequency += result
+        
+        print(f"Parallel pre-tokenization complete. Found {len(self.frequency)} unique tokens.")
 
     def train_bpe(self, maximum_vocab_size: int = 10000):
         """
@@ -204,6 +221,7 @@ def train_bpe(
 ):
     tokenizer = BPETokenizer(corpus = input_path, special_tokens=special_tokens)
     s = time()
+    # tokenizer.parallel_pre_tokenize_corpus(4)
     tokenizer.pre_tokenize_corpus()
     d = time()
     print(f"Pre-tokenization took {d - s:.2f} seconds.")
@@ -214,6 +232,6 @@ def train_bpe(
 
 if __name__ == "__main__":
     tokenizer = BPETokenizer("data/baby_data.txt", special_tokens=["<|endoftext|>"])
-    tokenizer.pre_tokenize_corpus()
+    tokenizer.parallel_pre_tokenize_corpus(4)
+    print(tokenizer.frequency)
     tokenizer.train_bpe(maximum_vocab_size=300)
-    print(tokenizer.merges)
