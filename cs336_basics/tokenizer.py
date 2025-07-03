@@ -40,14 +40,14 @@ class BPETokenizer():
         PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         return re.finditer(PAT, text, re.UNICODE)
     
-    def pre_tokenize_corpus(self) -> dict[str, int]:
+    def pre_tokenize_corpus(self):
         """
         对语料库进行预分词
         """
         for text in tqdm(self.corpus, desc="Pre-tokenizing corpus"):
-            for word in BPETokenizer.pre_tokenize(text):
-                word = word.group(0)
-                self.frequency[word] = self.frequency.get(word, 0) + 1
+            for result in BPETokenizer.pre_tokenize(text):
+                token = result.group(0)
+                self.frequency[token] = self.frequency.get(token, 0) + 1
         
         print(f"Pre-tokenization complete. Found {len(self.frequency)} unique tokens.")
     
@@ -116,7 +116,7 @@ class BPETokenizer():
                             maxp = pair
                 pbar.update(1)
             pbar.close()
-        # print(appearances)
+        
         pbar = tqdm(total=maximum_vocab_size - len(self.vocab), desc="BPE Training(Merging byte pairs)...")
         while len(self.vocab) < maximum_vocab_size:
             current_vocab_size = len(self.vocab)
@@ -128,6 +128,7 @@ class BPETokenizer():
                 pbar.update(len(self.vocab) - current_vocab_size) 
                 
                 pos = list(position[maxp])
+                ord = 0
                 for token, k1 in pos:
                     s = ufs[token]
                     v = value[token]
@@ -145,8 +146,8 @@ class BPETokenizer():
                         
                         decreaseD(appearances, (bPre, maxp[0]), frequency[token])
                         removeD(position, (bPre, maxp[0]), (token, k0))
-                        if (bPre, maxp[0]) == maxp:
-                            pos.remove((token, k0))
+                        if (bPre, maxp[0]) == maxp and pos.index((token, k0)) > ord:
+                           pos.remove((token, k0))
 
                     if s.has(k2 + sizek2):
                         k3 = k2 + sizek2
@@ -156,8 +157,9 @@ class BPETokenizer():
 
                         decreaseD(appearances, (maxp[1], bSuf), frequency[token])
                         removeD(position, (maxp[1], bSuf), (token, k2))
-                        if (maxp[1], bSuf) == maxp:
+                        if (maxp[1], bSuf) == maxp and pos.index((token, k2)) > ord:
                             pos.remove((token, k2))
+                    ord += 1
                         
                 appearances.pop(maxp)
                 position.pop(maxp)
@@ -183,6 +185,17 @@ class BPETokenizer():
         with open(output_path, "wb") as f:
             dump(self.vocab, f)
         print(f"Vocabulary saved to {output_path}")
+    
+    def save_merges(self, output_path: str | os.PathLike):
+        """
+        保存BPE合并规则到指定路径
+
+        Args:
+            output_path (str | os.PathLike): 输出路径
+        """
+        with open(output_path, "wb") as f:
+            dump(self.merges, f)
+        print(f"Merges saved to {output_path}")
     
 def train_bpe(
     input_path: str | os.PathLike,

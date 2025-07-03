@@ -28,11 +28,14 @@ class UnionFindSet:
     def has(self, x: int) -> bool:
         return x >= 0 and x < len(self.parent)
 
-def increaseD(d: dict, key: any):
-    d[key] = d.get(key, 0) + 1
+def increaseD(d: dict, key: any, value: int = 1):
+    d[key] = d.get(key, 0) + value
 
-def decreaseD(d: dict, key: any):
-    d[key] -= 1
+def decreaseD(d: dict, key: any, value: int = 1):
+    d[key] -= value
+    assert d[key] >= 0
+    if d[key] == 0:
+        del d[key]
 
 def appendD(d: dict, key: any, value: any):
     if key not in d:
