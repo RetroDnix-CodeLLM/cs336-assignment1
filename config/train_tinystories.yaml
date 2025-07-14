@@ -1,0 +1,32 @@
+tokenizer:
+  vocab_file: ./data/TinyStoriesV2-GPT4-train_vocab.pkl
+  merges_file: ./data/TinyStoriesV2-GPT4-train_merges.pkl
+  special_tokens: ["<|endoftext|>"]
+
+dataset:
+  train_file: ./data/TinyStoriesV2-GPT4-train.txt
+  tokenized_train_file: ./data/TinyStoriesV2-GPT4-train_tokenized.pkl
+  valid_file: ./data/TinyStoriesV2-GPT4-valid.txt
+  tokenized_valid_file: ./data/TinyStoriesV2-GPT4-valid_tokenized.pkl
+
+model:
+  vocab_size: 10000
+  context_length: 256
+  d_model: 512
+  d_ff: 1344
+  theta: 10000
+  num_layers: 4
+  num_heads: 16
+
+training:
+  batch_size: 64
+  epochs: 20
+  learning_rate: 1e-3
+  optimizer: adamW
+  lr_scheduler:
+    type: cosine_annealing
+    min_learning_rate: 1e-5
+    warmup_ratio: 0.1
+  save_path: ./checkpoints
+  device: "cuda"
+  dtype: "bfloat16"
