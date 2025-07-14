@@ -337,12 +337,8 @@ class BPETokenizer:
     def parallel_tokenize_txt(
         self,
         file_path: str,
-        num_workers: int = None,
-        save_path: str = None
+        num_workers: int,
     ):
-        if num_workers is None:
-            num_workers = min(cpu_count(), 8)
-
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         
@@ -359,11 +355,6 @@ class BPETokenizer:
 
         for result in results:
             tokenized_data.extend(result)
-
-        if save_path:
-            with open(save_path, 'wb') as f:
-                dump(tokenized_data, f)
-            print(f"Tokenized data saved to {save_path}")
 
         return tokenized_data
 
