@@ -1,10 +1,11 @@
-from cs336_basics import BPETokenizer
+from cs336_basics import BPETrainer
 
-data = "data/owt_train.txt"
+dname = "TinyStoriesV2-GPT4-train"
+data = f"data/{dname}.txt"
 
 if __name__ == "__main__":
-    tokenizer = BPETokenizer(data, special_tokens=["<|endoftext|>"])
+    tokenizer = BPETrainer(data, special_tokens=["<|endoftext|>"])
     tokenizer.pre_tokenize_corpus()
-    tokenizer.train_bpe(maximum_vocab_size=32000)
-    tokenizer.save_vocab("data/owt_train_vocab.pkl")
-    tokenizer.save_merges("data/owt_train_merges.pkl")
+    tokenizer.train_bpe(maximum_vocab_size=10000)
+    tokenizer.save_vocab(f"data/{dname}_vocab.pkl")
+    tokenizer.save_merges(f"data/{dname}_merges.pkl")

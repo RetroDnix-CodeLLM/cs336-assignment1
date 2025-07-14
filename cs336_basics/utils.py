@@ -32,10 +32,10 @@ def increaseD(d: dict, key: any, value: int = 1):
     d[key] = d.get(key, 0) + value
 
 def decreaseD(d: dict, key: any, value: int = 1):
-    d[key] -= value
-    assert d[key] >= 0
-    if d[key] == 0:
-        del d[key]
+    if key in d:
+        d[key] -= value
+        if d[key] <= 0:
+            del d[key]
 
 def appendD(d: dict, key: any, value: any):
     if key not in d:
@@ -43,4 +43,5 @@ def appendD(d: dict, key: any, value: any):
     d[key].add(value)
 
 def removeD(d: dict, key: any, value: any):
-    d[key].remove(value)
+    if key in d and value in d[key]:
+        d[key].remove(value)

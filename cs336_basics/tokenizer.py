@@ -1,14 +1,15 @@
 import os
 import regex as re
+from typing import Iterable, Iterator
 from time import time
 from tqdm import tqdm
-from pickle import dump
+from pickle import dump, load
 from multiprocessing import Pool, cpu_count
 from collections import Counter
 
 from cs336_basics.utils import UnionFindSet, increaseD, decreaseD, appendD, removeD
 
-class BPETokenizer():
+class BPETrainer():
     pretokenizePAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     def __init__(self, corpus:str, special_tokens: list[str] = ["<|endoftext|>"]):
         self.vocab = {}
@@ -39,14 +40,14 @@ class BPETokenizer():
         Returns:
             frequency (dict[str:int]): 预分词后的token列表
         """
-        return re.finditer(BPETokenizer.pretokenizePAT, text, re.UNICODE)
+        return re.finditer(BPETrainer.pretokenizePAT, text, re.UNICODE)
     
     def pre_tokenize_corpus(self):
         """
         对语料库进行预分词
         """
         for text in tqdm(self.corpus, desc="Pre-tokenizing corpus"):
-            for result in BPETokenizer.pre_tokenize(text):
+            for result in BPETrainer.pre_tokenize(text):
                 token = result.group(0)
                 self.frequency[token] = self.frequency.get(token, 0) + 1
         
@@ -66,12 +67,14 @@ class BPETokenizer():
         id = text_chunk[0]
         chunk = text_chunk[1]
         frequency = Counter()
-        for i, text in enumerate(chunk):
-            for result in re.finditer(BPETokenizer.pretokenizePAT, text, re.UNICODE):
+        i = 0
+        for text in chunk:
+            for result in re.finditer(BPETrainer.pretokenizePAT, text, re.UNICODE):
                 token = result.group(0)
                 frequency[token] += 1
             if i % 10000 == 0:
                 print(f"Process {id}: {i} / {len(chunk)}")
+            i += 1
         return frequency
 
     def parallel_pre_tokenize_corpus(self, num_processes=None):
@@ -92,7 +95,7 @@ class BPETokenizer():
         
         # 使用多进程池处理语料库
         with Pool(num_processes) as pool:
-            for result in pool.imap_unordered(BPETokenizer._process_text_chunk, enumerate(self.chunked_corpus)):
+            for result in pool.imap_unordered(BPETrainer._process_text_chunk, enumerate(self.chunked_corpus)):
                 self.frequency += result
         
         print(f"Parallel pre-tokenization complete. Found {len(self.frequency)} unique tokens.")
@@ -144,14 +147,15 @@ class BPETokenizer():
 
                 pbar.update(len(self.vocab) - current_vocab_size) 
                 
+                merged = {}
                 pos = list(position[maxp])
-                ord = 0
                 for token, k1 in pos:
+                    if (token, k1) in merged:
+                        continue
                     s = ufs[token]
                     v = value[token]
                     k2 = k1 + s.getSize(k1)
                     sizek2 = s.getSize(k2)
-
                     s.union(k1, k2)
                     v[k1] = bMaxPair
                     
@@ -163,8 +167,8 @@ class BPETokenizer():
                         
                         decreaseD(appearances, (bPre, maxp[0]), frequency[token])
                         removeD(position, (bPre, maxp[0]), (token, k0))
-                        if (bPre, maxp[0]) == maxp and pos.index((token, k0)) > ord:
-                           pos.remove((token, k0))
+                        if (bPre, maxp[0]) == maxp:
+                            merged[(token, k0)] = True
 
                     if s.has(k2 + sizek2):
                         k3 = k2 + sizek2
@@ -174,9 +178,8 @@ class BPETokenizer():
 
                         decreaseD(appearances, (maxp[1], bSuf), frequency[token])
                         removeD(position, (maxp[1], bSuf), (token, k2))
-                        if (maxp[1], bSuf) == maxp and pos.index((token, k2)) > ord:
-                            pos.remove((token, k2))
-                    ord += 1
+                        if (maxp[1], bSuf) == maxp:
+                            merged[(token, k2)] = True
                         
                 appearances.pop(maxp)
                 position.pop(maxp)
@@ -219,10 +222,10 @@ def train_bpe(
     vocab_size: int,
     special_tokens: list[str],
 ):
-    tokenizer = BPETokenizer(corpus = input_path, special_tokens=special_tokens)
+    tokenizer = BPETrainer(corpus = input_path, special_tokens=special_tokens)
     s = time()
-    # tokenizer.parallel_pre_tokenize_corpus(4)
-    tokenizer.pre_tokenize_corpus()
+    tokenizer.parallel_pre_tokenize_corpus(4)
+    # tokenizer.pre_tokenize_corpus()
     d = time()
     print(f"Pre-tokenization took {d - s:.2f} seconds.")
     tokenizer.train_bpe(maximum_vocab_size=vocab_size)
@@ -230,8 +233,114 @@ def train_bpe(
     reversed_vocab = {v: k for k, v in tokenizer.vocab.items()}
     return reversed_vocab, tokenizer.merges
 
+class BPETokenizer:
+    def __init__(self, vocab, merges, special_tokens=None):
+        """
+        Construct a tokenizer from a given vocabulary, list of merges, and (optionally) a list of special tokens. This function should accept the following parameters:  
+        Args:
+            vocab: dict[int, bytes]  
+            merges: list[tuple[bytes, bytes]]
+            special_tokens: list[str] | None = None
+        """
+        self.vocab = vocab
+        self.merges = merges
+        self.id2bytes = {v: k for k, v in vocab.items()}
+        self.word2token = {}
+        self.special_tokens = special_tokens if special_tokens is not None else [r"[\r\n]$",]
+        for i, sp_token in enumerate(self.special_tokens):
+            for j in range(i + 1, len(self.special_tokens)):
+                if sp_token in self.special_tokens[j]:
+                    self.special_tokens[i] = self.special_tokens[j]
+                    self.special_tokens[j] = sp_token
+    
+    @staticmethod
+    def from_files(vocab_filepath, merges_filepath, special_tokens=None):
+        """
+        Class  method that constructs and return a Tokenizer from a serialized vocabulary and list of merges (in the same format that your BPE training code output) and (optionally) a list of special tokens. 
+        Args:
+            vocab_filepath: str  
+            merges_filepath: str  
+            special_tokens: list[str] | None = None  
+        """
+        with open(vocab_filepath, "rb") as f:
+            vocab = load(f)
+        
+        with open(merges_filepath, "rb") as f:
+            merges = load(f)
+        
+        return BPETokenizer(vocab, merges, special_tokens)
+
+    def _encode_sent(self, sentence: str) -> list[int]:
+        result = []
+        words = BPETrainer.pre_tokenize(sentence)
+        for word in words:
+            word = word.group(0)
+            if word in self.word2token:
+                result.extend(self.word2token[word])
+            else:
+                bword = [bytes((i,)) for i in word.encode("utf-8")]
+                for pair in self.merges:
+                    i = 0
+                    maxi = len(bword) - 1
+                    while i < maxi:
+                        if bword[i] == pair[0] and bword[i + 1] == pair[1]:
+                            bword[i:i + 2] = [pair[0] + pair[1]]
+                            maxi = len(bword) - 1
+                        i += 1
+                    if len(bword) <= 1:
+                        break
+                ids = [self.vocab[b] for b in bword if b in self.vocab]
+                self.word2token[word] = ids
+                result.extend(ids)
+        return result
+    
+    def encode(self, text: str) -> list[int]:
+        """Encode an input text into a sequence of token IDs."""
+        PAT = '|'.join(map(re.escape, self.special_tokens))
+        result = []
+        matches = re.finditer(PAT, text)
+        pos = 0
+        for match in matches:
+            result.extend(self._encode_sent(text[pos:match.start()]))
+            result.append(self.vocab[match.group(0).encode("utf-8")])
+            pos = match.end()
+        result.extend(self._encode_sent(text[pos:]))
+        return result
+    
+    def encode_iterable(self, iterable: Iterable[str]) ->  Iterator[int]:
+        """
+        Given an iterable of strings (e.g., a Python file handle), return a generator that lazily yields token IDs. This is required for memory-efficient tokenization of large files that we cannot directly load into memory.  
+        """
+        buffer = ""
+        for text in iterable:
+            buffer += text
+            PAT = '|'.join(map(re.escape, self.special_tokens))
+            matches = re.finditer(PAT, buffer)
+            for match in matches:
+                yield from self._encode_sent(buffer[:match.start()])
+                yield self.vocab[match.group(0).encode("utf-8")]
+                buffer = buffer[match.end():]
+        yield from self._encode_sent(buffer)
+    
+    def decode(self, ids: list[int]|Iterator[int]) -> str:
+        """
+        Decode a sequence of token IDs into text.  To test your Tokenizer against our provided tests, you will first need to implement the test adapter at [adapters.get_tokenizer]. Then, run uv run pytest tests/test_tokenizer.py. Your implementation should be able to pass all tests.
+        """
+        byte_s = [self.id2bytes[i] for i in ids if i in self.id2bytes]
+        text = b"".join(byte_s).decode("utf-8", errors="replace")
+        return text
+
 if __name__ == "__main__":
-    tokenizer = BPETokenizer("data/baby_data.txt", special_tokens=["<|endoftext|>"])
-    tokenizer.parallel_pre_tokenize_corpus(4)
-    print(tokenizer.frequency)
-    tokenizer.train_bpe(maximum_vocab_size=300)
+    trainer = BPETrainer("data/baby_data.txt", special_tokens=["<|endoftext|>", "<|endoftext|><|endoftext|>"])
+    trainer.parallel_pre_tokenize_corpus(4)
+    trainer.train_bpe(maximum_vocab_size=300)
+
+    tokenizer = BPETokenizer(trainer.vocab, trainer.merges)
+    print(trainer.vocab)
+    with open("data/baby_data.txt") as f:
+        ids = tokenizer.encode_iterable(f)
+        print(tokenizer.decode(ids))
+
+    # ids = tokenizer.encode("")
+    # print(ids)
+    # print(tokenizer.decode(ids))
