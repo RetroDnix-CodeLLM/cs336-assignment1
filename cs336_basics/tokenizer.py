@@ -238,13 +238,21 @@ class BPETokenizer:
         """
         Construct a tokenizer from a given vocabulary, list of merges, and (optionally) a list of special tokens. This function should accept the following parameters:  
         Args:
-            vocab: dict[int, bytes]  
-            merges: list[tuple[bytes, bytes]]
+            vocab: dict[int, bytes] | str 
+            merges: list[tuple[bytes, bytes]] | str
             special_tokens: list[str] | None = None
         """
         self.vocab = vocab
         self.merges = merges
-        self.id2bytes = {v: k for k, v in vocab.items()}
+        
+        if isinstance(vocab, str):
+            with open(vocab, "rb") as f:
+                self.vocab = load(f)
+        if isinstance(merges, str):
+            with open(merges, "rb") as f:
+                self.merges = load(f)
+
+        self.id2bytes = {v: k for k, v in self.vocab.items()}
         self.word2token = {}
         self.special_tokens = special_tokens if special_tokens is not None else [r"[\r\n]$",]
         for i, sp_token in enumerate(self.special_tokens):
@@ -299,11 +307,15 @@ class BPETokenizer:
         PAT = '|'.join(map(re.escape, self.special_tokens))
         result = []
         matches = re.finditer(PAT, text)
-        pos = 0
+        total = len(text)
+        lastpos = pos = 0
         for match in matches:
             result.extend(self._encode_sent(text[pos:match.start()]))
             result.append(self.vocab[match.group(0).encode("utf-8")])
             pos = match.end()
+            if pos - lastpos > 1000000:
+                print(f"Processed {pos}/{total} characters.")
+                lastpos = pos
         result.extend(self._encode_sent(text[pos:]))
         return result
     
@@ -321,6 +333,40 @@ class BPETokenizer:
                 yield self.vocab[match.group(0).encode("utf-8")]
                 buffer = buffer[match.end():]
         yield from self._encode_sent(buffer)
+    
+    def parallel_tokenize_txt(
+        self,
+        file_path: str,
+        num_workers: int = None,
+        save_path: str = None
+    ):
+        if num_workers is None:
+            num_workers = min(cpu_count(), 8)
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        print(f"Loaded {len(lines)} lines from {file_path}")
+
+        chunk_size = len(lines) // num_workers
+        chunks = ["\n".join(lines[i:i + chunk_size]) for i in range(0, len(lines), chunk_size)]
+        
+        print(f"Tokenizing with {num_workers} workers...")
+
+        tokenized_data = []
+        with Pool(num_workers) as pool:
+            results = list(pool.imap(self.encode, chunks))
+
+        for result in results:
+            tokenized_data.extend(result)
+
+        if save_path:
+            with open(save_path, 'wb') as f:
+                dump(tokenized_data, f)
+            print(f"Tokenized data saved to {save_path}")
+
+        return tokenized_data
+
     
     def decode(self, ids: list[int]|Iterator[int]) -> str:
         """
