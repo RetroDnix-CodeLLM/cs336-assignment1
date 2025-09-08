@@ -359,10 +359,12 @@ class BPETokenizer:
         return tokenized_data
 
     
-    def decode(self, ids: list[int]|Iterator[int]) -> str:
+    def decode(self, ids: list[int]|Iterator[int]|int) -> str:
         """
         Decode a sequence of token IDs into text.  To test your Tokenizer against our provided tests, you will first need to implement the test adapter at [adapters.get_tokenizer]. Then, run uv run pytest tests/test_tokenizer.py. Your implementation should be able to pass all tests.
         """
+        if isinstance(ids, int):
+            ids = [ids]
         byte_s = [self.id2bytes[i] for i in ids if i in self.id2bytes]
         text = b"".join(byte_s).decode("utf-8", errors="replace")
         return text

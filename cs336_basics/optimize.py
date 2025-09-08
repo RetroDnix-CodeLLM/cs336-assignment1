@@ -64,7 +64,6 @@ class AdamW(Optimizer):
             beta1, beta2 = group['betas']
             eps = group['eps']
             weight_decay = group['weight_decay']
-            grad_avg = 0
             for p in group['params']:
                 if p.grad is None:
                     continue
@@ -103,7 +102,13 @@ class AdamW(Optimizer):
 
         return loss
 
-def get_cosine_annealing_lr(t, aMax, aMin, Tw, Tc):
+def get_cosine_annealing_lr(    
+        it: int,
+        max_learning_rate: float,
+        min_learning_rate: float,
+        warmup_iters: int,
+        cosine_cycle_iters: int,
+    ):
     """
     Compute the learning rate using cosine annealing.
     
@@ -117,12 +122,49 @@ def get_cosine_annealing_lr(t, aMax, aMin, Tw, Tc):
     Returns:
         Computed learning rate at time step t.
     """
-    if t < Tw:
-        return aMax * t / Tw
-    elif Tw <= t <= Tc:
-        return aMin + 0.5 * (aMax - aMin) * (1 + math.cos(torch.pi * (t - Tw) / (Tc - Tw)))
+    if it < warmup_iters:
+        return max_learning_rate * it / warmup_iters
+    elif warmup_iters <= it <= cosine_cycle_iters:
+        return min_learning_rate + 0.5 * (max_learning_rate - min_learning_rate) * (1 + math.cos(torch.pi * (it - warmup_iters) / (cosine_cycle_iters - warmup_iters)))
     else:
-        return aMin
+        return min_learning_rate
+
+class lr_scheduler:
+    def __init__(
+            self, 
+            optimizer: Optimizer,
+            max_learning_rate: float,
+            min_learning_rate: float,
+            warmup_iters: int,
+            cosine_cycle_iters: int
+        ):
+        """
+        Initialize the learning rate scheduler.
+        
+        Args:
+            optimizer: The optimizer to schedule.
+            max_learning_rate: Maximum learning rate.
+            min_learning_rate: Minimum learning rate.
+            warmup_iters: Number of warmup iterations.
+            cosine_cycle_iters: Total cycle period for cosine annealing.
+        """
+        self.optimizer = optimizer
+        self.max_learning_rate = max_learning_rate
+        self.min_learning_rate = min_learning_rate
+        self.warmup_iters = warmup_iters
+        self.cosine_cycle_iters = cosine_cycle_iters
+        self.last_epoch = 0
+
+    def step(self):
+        """
+        Update the learning rate for each parameter group in the optimizer.
+        """
+        self.last_epoch += 1
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = get_cosine_annealing_lr(self.last_epoch, self.max_learning_rate, self.min_learning_rate, self.warmup_iters, self.cosine_cycle_iters)
+    
+    def get_last_lr(self) -> float:
+        return self.optimizer.param_groups[0]["lr"]
 
 def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float):
     """

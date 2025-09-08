@@ -106,7 +106,7 @@ class SwiGLU(torch.nn.Module):
         return self.w2(sigu_w1x * w3x) # shape: (..., d_ff) -> (..., d_model)
     
 class RoPE(torch.nn.Module):
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, dtype=None, device=None):
         """
         Rotary Positional Embedding (RoPE) 模块。
 
@@ -125,14 +125,14 @@ class RoPE(torch.nn.Module):
         self.theta = theta
 
         # 创建旋转频率：shape [d_k // 2]
-        inv_freq = 1.0 / (theta ** (torch.arange(0, d_k, 2).float() / d_k))
+        inv_freq = 1.0 / (theta ** (torch.arange(0, d_k, 2, device=device).float() / d_k))
 
         # 生成 [max_seq_len, d_k // 2]
-        pos = torch.arange(max_seq_len, dtype=torch.float32).unsqueeze(1)
+        pos = torch.arange(max_seq_len, dtype=torch.float32, device=device).unsqueeze(1)
         freqs = pos * inv_freq.unsqueeze(0)  # [max_seq_len, d_k // 2]
 
-        self.register_buffer("cos", torch.cos(freqs), persistent=False)  # [max_seq_len, d_k // 2]
-        self.register_buffer("sin", torch.sin(freqs), persistent=False)
+        self.register_buffer("cos", torch.cos(freqs).to(dtype), persistent=False)  # [max_seq_len, d_k // 2]
+        self.register_buffer("sin", torch.sin(freqs).to(dtype), persistent=False)
 
     def forward(
         self, 
@@ -186,14 +186,17 @@ def scaledDotProductAttention(
     """
     d_k = Q.shape[-1]
     scores = einsum(Q, K, '... queries d_k, ... keys d_k -> ... queries keys') / sqrt(d_k)
+    
+    # 应用因果mask
     if mask is not None:
         # 将 mask 为 0 的位置设为 -1e9，使 softmax 后趋近于0
         scores = scores.masked_fill(mask == 0, float('-1e9'))
-    attn_weights = softmax(scores, dim=-1)
+    
+    attn_weights = softmax(scores, dim=-1).to(V.dtype)  # (..., queries, keys)
     return einsum(attn_weights, V, '... queries keys, ... keys d_v -> ... queries d_v')
 
 class MultiHeadSelfAttention(torch.nn.Module):
-    def __init__(self, d_model: int, num_heads: int, theta=None, max_seq_len=None, device=None, dtype=None):
+    def __init__(self, d_model: int, num_heads: int, theta: float, max_seq_len: int, device=None, dtype=None):
         """
         Aegs:
             d_model: int Dimensionality of the Transformer block inputs.  
@@ -207,8 +210,8 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.num_heads = num_heads
         self.d_k = d_model // num_heads
 
-        self.theta = theta if theta is not None else 10000.0  # Default value for RoPE
-        self.max_seq_len = max_seq_len if max_seq_len is not None else 2048  # Default max sequence length
+        self.theta = theta
+        self.max_seq_len = max_seq_len
 
         self.Wqkv = Linear(d_model, d_model * 3, device=device, dtype=dtype)
 
@@ -254,7 +257,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         return self.Wo(attn_output)
 
 class TransformerBlock(torch.nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, theta: Float = None, max_seq_len: int = None, device=None, dtype=None):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, theta: float, max_seq_len: int, device=None, dtype=None):
         """
         Construct a Transformer block.
         Args:
@@ -279,7 +282,7 @@ class TransformerBlock(torch.nn.Module):
         return x
 
 class TransformerLM(torch.nn.Module):
-    def __init__(self, vocab_size: int, context_length: int, d_model: int, num_layers: int, num_heads: int, d_ff: int, rope_theta: Float = None, device=None, dtype=None):
+    def __init__(self, vocab_size: int, context_length: int, d_model: int, num_layers: int, num_heads: int, d_ff: int, rope_theta: float, device=None, dtype=None):
         """
         Construct a Transformer language model.
         Args:
